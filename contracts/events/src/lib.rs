@@ -166,6 +166,29 @@ pub fn emit_note_bound(e: &Env, run_id: u64, note_hash: BytesN<32>) {
     );
 }
 
+/// Emitted when a confidential memo's hash is registered for a payroll
+/// batch. Deliberately carries only the hash plus the already-public
+/// (employer, period, batch_id) identifiers, never the memo's actual
+/// content.
+pub fn emit_memo_registered(
+    e: &Env,
+    employer: Address,
+    period: Symbol,
+    batch_id: BytesN<32>,
+    memo_hash: BytesN<32>,
+) {
+    e.events().publish(
+        (
+            payroll_topic(),
+            Symbol::new(e, "memo_registered"),
+            employer,
+            period,
+            batch_id,
+        ),
+        memo_hash,
+    );
+}
+
 /// Emitted when a draft hash is pre-committed on-chain.
 pub fn emit_draft_committed(e: &Env, draft_hash: BytesN<32>) {
     e.events().publish(

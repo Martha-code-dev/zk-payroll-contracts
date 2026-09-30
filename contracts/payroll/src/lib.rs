@@ -1235,6 +1235,11 @@ pub enum DataKey {
     /// Accumulated correction usage counters for a payroll period (#577).
     /// Absent means no corrections have been recorded for the period.
     CorrectionUsage(Symbol),
+    /// Confidential memo hash registered for a payroll batch, keyed by
+    /// (employer, period, batch_id) (#347). The memo content itself is
+    /// never stored on-chain, only its hash, so this key existing is what
+    /// `register_memo_hash`'s duplicate guard checks for.
+    MemoHash(Address, Symbol, BytesN<32>),
     // Future upgrade example (issue #196):
     // PayrollRunV2(u64),  // Would be added here when schema evolution is needed
 }
@@ -6463,6 +6468,66 @@ impl Payroll {
             .get(&DataKey::PayrollRun(run_id))
             .expect("Run not found");
         run.note_hash == expected_hash
+    }
+
+    // ?? Issue #347: confidential memo hash registry ?????????????????????????
+
+    /// Register a confidential memo's hash for a payroll batch, scoped to
+    /// (employer, period, batch_id).
+    ///
+    /// Only the hash is ever recorded on-chain; the memo content itself is
+    /// never passed to or stored by this contract. Rejects a hash that has
+    /// already been registered for the same (employer, period, batch_id)
+    /// key, so a memo cannot be silently overwritten or replayed onto a
+    /// batch that already has one registered.
+    ///
+    /// Only the admin may call, mirroring every other registration entry
+    /// point in this contract (`commit_payroll_note_hash`,
+    /// `set_capacity_limits`).
+    pub fn register_memo_hash(
+        e: Env,
+        admin: Address,
+        employer: Address,
+        period: Symbol,
+        batch_id: BytesN<32>,
+        memo_hash: BytesN<32>,
+    ) {
+        Self::require_not_paused(&e);
+        Self::validate_non_zero_digest(&e, &memo_hash, "memo_hash");
+        Self::validate_symbol_not_empty(&e, &period, "period");
+        let addrs: ContractAddresses = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Addresses)
+            .expect("Not initialized");
+        if admin != addrs.admin {
+            panic!("Unauthorized");
+        }
+        admin.require_auth();
+
+        let key = DataKey::MemoHash(employer.clone(), period.clone(), batch_id.clone());
+        if e.storage().persistent().has(&key) {
+            panic!("Memo hash already registered for this batch");
+        }
+        e.storage().persistent().set(&key, &memo_hash);
+
+        payroll_events::emit_memo_registered(&e, employer, period, batch_id, memo_hash);
+    }
+
+    /// Return the confidential memo hash registered for a payroll batch.
+    ///
+    /// Read-only. Panics if no memo hash has been registered for this
+    /// exact (employer, period, batch_id) key.
+    pub fn get_memo_hash(
+        e: Env,
+        employer: Address,
+        period: Symbol,
+        batch_id: BytesN<32>,
+    ) -> BytesN<32> {
+        e.storage()
+            .persistent()
+            .get(&DataKey::MemoHash(employer, period, batch_id))
+            .expect("Memo hash not found")
     }
 
     // ?? Issue #147: company state management ?????????????????????????????????
